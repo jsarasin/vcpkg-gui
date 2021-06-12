@@ -145,7 +145,32 @@ class VCPKGInterface:
 
 
 class OverviewWindow:
-    # Main GUI window, seen when the application
+    """ Main GUI window, seen when the application
+    """
+
+    def open_package_context_menu(self, event):
+        clicked_item = self.tv_ip.identify('item',event.x,event.y)
+        region_clicked = self.tv_ip.identify_region(event.x, event.y)
+
+        # Only open the dialog if they've rightclicked on an item (Not the header etc)
+        if region_clicked != 'cell':
+            return
+
+        # If they right clicked on an item that isn't selected already, then change the selection to this single item
+        selected_items = self.tv_ip.selection() # TODO: Is this returning the ID's or the index?
+
+        if clicked_item not in selected_items:
+            self.tv_ip.selection_set(clicked_item)
+            self.tv_ip.update()
+            selected_items = self.tv_ip.selection()  # TODO: Is this returning the ID's or the index?
+
+        if len(selected_items) > 1:
+            self.menu_packages_context.tk_popup(event.x_root, event.y_root)
+        elif len(selected_items) == 1:
+            self.menu_package_context.tk_popup(event.x_root, event.y_root)
+        else:
+            raise Exception("This shouldn't happen")
+
     def __init__(self, vcpkg_obj: VCPKGInterface):
         self.vcpkg_obj = vcpkg_obj
         self.root_window = Tk()
@@ -155,9 +180,23 @@ class OverviewWindow:
         self.package_name_to_treeview_index_dict = dict()
         self.next_treeview_id = 0
 
+        # Setup the right click context menu for the treeview for a single item
+        self.menu_package_context = Menu(self.root_window, tearoff=0)
+        self.menu_package_context.add_command(label="Open Details", command=self.show_installed_package_details)
+        self.menu_package_context.add_command(label="Configure Architectures")
+        self.menu_package_context.add_separator()
+        self.menu_package_context.add_command(label="Remove Package")
+
+        # Setup the right click context menu for the treeview for multiple items
+        self.menu_packages_context = Menu(self.root_window, tearoff=0)
+        self.menu_packages_context.add_command(label="Configure Architectures")
+        self.menu_packages_context.add_separator()
+        self.menu_packages_context.add_command(label="Remove Packages")
+
         frame1 = ttk.Frame(self.root_window)
         frame1.pack(fill=X,side=TOP)
 
+        # Setup the main menu for the window
         menubar = Menu(self.root_window)
 
         # App Menu
@@ -169,8 +208,8 @@ class OverviewWindow:
 
         # Integrate Menu
         integrate_menu = Menu(menubar, tearoff=0)
-        integrate_menu.add_command(label="Install", state=DISABLED)
-        integrate_menu.add_command(label="Remove")
+        integrate_menu.add_command(label="Install System Wide", state=DISABLED)
+        integrate_menu.add_command(label="Remove System Wide")
         integrate_menu.add_command(label="PowerShell Tab Complete")
         integrate_menu.add_separator()
         integrate_menu.add_command(label="Project")
@@ -210,6 +249,7 @@ class OverviewWindow:
 
         # Installed Packages Treeview
         self.tv_ip = ttk.Treeview(frame2, yscroll=self.tv_vscb.set, xscroll=self.tv_hscb.set)
+        self.tv_ip.bind("<Button-3>", self.open_package_context_menu)
         self.tv_ip.bind("<Double-1>", self.open_package_details)
         self.tv_ip['columns'] = ('package_name', 'version', 'triplet', 'description')
 
@@ -244,18 +284,7 @@ class OverviewWindow:
         # self.show_installed_package_details()
 
     def open_package_details(self, event):
-        item = self.tv_ip.selection() # TODO: Is this returning the ID's or the index?
-        # print(type(self.tv_ip.item(item, "text")))
-        if len(item) > 1:
-            return
-        selected_package = item[0]
-        selected_package_name = self.tv_ip.item(selected_package)['values'][0]
-        self.installed_package_details_class.present_package(selected_package_name)
-        # self.installed_package_details_window.present_package()
-
-    def context_menu_package(self, event):
-        pass
-        # item = self.tree.identify('item',event.x,event.y)
+        self.show_installed_package_details()
 
     def init_other_windows(self):
         self.install_new_pkg_window = tk.Toplevel(self.root_window)
@@ -265,8 +294,14 @@ class OverviewWindow:
         self.installed_package_details_class = InstalledPackageDetails(self.installed_package_details_window, self.vcpkg_obj)
 
     def show_installed_package_details(self):
-        self.installed_package_details_window.update()
-        self.installed_package_details_window.deiconify()
+        item = self.tv_ip.selection() # TODO: Is this returning the ID's or the index?
+        # print(type(self.tv_ip.item(item, "text")))
+        if len(item) > 1:
+            return
+        selected_package = item[0]
+        selected_package_name = self.tv_ip.item(selected_package)['values'][0]
+        self.installed_package_details_class.present_package(selected_package_name)
+
 
     def show_install_new_vc_package(self):
         self.install_new_pkg_window.update()
@@ -326,7 +361,6 @@ class OverviewWindow:
         self.populate_installed_packages()
         self.root_window.mainloop()
 
-
 # Details window for installed packages
 class InstalledPackageDetails:
     def __init__(self, tk_window, vcpkg_obj: VCPKGInterface):
@@ -335,7 +369,7 @@ class InstalledPackageDetails:
         self.tk_window.withdraw()
         self.tk_window.title('Package Details')
         self.tk_window.protocol("WM_DELETE_WINDOW", self.close_install_pkg_window)
-        self.tk_window.geometry('600x600')
+        self.tk_window.geometry('500x400')
 
         frame1 = ttk.Frame(self.tk_window)
         frame1.pack(fill=X, expand=0, padx=30, pady=10)
@@ -364,6 +398,7 @@ class InstalledPackageDetails:
         frame2 = ttk.Frame(self.tk_window)
         frame2.pack(side=LEFT, anchor='ne', fill=BOTH, expand=1)
         frame2.columnconfigure(0, weight=1)
+        frame2.rowconfigure(0, weight=1)
 
         # Treeview
         self.tv_instd_ver_pkg = ttk.Treeview(frame2)
@@ -391,6 +426,9 @@ class InstalledPackageDetails:
         self.but_remove_selected = ttk.Button(frame3, text="Remove Selected", state=DISABLED)
         self.but_remove_selected.pack(side=TOP, fill=X)
 
+        self.but_remove_all = ttk.Button(frame3, text="Remove All")
+        self.but_remove_all.pack(side=BOTTOM, fill=X)
+
     def close_install_pkg_window(self):
         self.tk_window.withdraw()
 
@@ -400,13 +438,12 @@ class InstalledPackageDetails:
         self.tv_instd_ver_pkg.delete(*self.tv_instd_ver_pkg.get_children())
 
         pkg_info = self.vcpkg_obj.get_package_info(package_name)
-        print(pkg_info)
 
         self.entry_pkg_name.delete(0, END)
         self.entry_pkg_name.insert(0, pkg_info['package_name'])
 
         self.entry_pkg_description.delete(0, END)
-        self.entry_pkg_description.insert(0, pkg_info['description'])
+        self.entry_pkg_description.insert(0, pkg_info['description'][0])
 
         next_tv_id = 0
 
