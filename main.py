@@ -11,9 +11,8 @@ import json
 # Explains pack grid place
 # https://riptutorial.com/tkinter/example/29712/pack--
 
-
-# Provide a fancier Input
 class EntryWithPlaceholder(tk.Entry):
+    # Provide a fancier Input
     def __init__(self, master=None, placeholder="PLACEHOLDER", color='grey'):
         super().__init__(master)
 
@@ -39,8 +38,8 @@ class EntryWithPlaceholder(tk.Entry):
         if not self.get():
             self.put_placeholder()
 
-# Provide a class based interface to communicate with vcpkg.exe
 class VCPKGInterface:
+    # Provide a class based interface to communicate with vcpkg.exe
     def __init__(self):
         # Location of vcpkg execuatable TODO: Don't hardcode
         self.vcpkg_exe_path = "C:/Code/vcpkg/vcpkg.exe"
@@ -62,8 +61,8 @@ class VCPKGInterface:
 
         return self.installed_packages
 
-# Main GUI Window
 class OverviewWindow:
+    # Main GUI window, seen when the application
     def __init__(self, vcpkg_obj: VCPKGInterface):
         self.vcpkg_obj = vcpkg_obj
         self.root_window = Tk()
@@ -207,11 +206,13 @@ class OverviewWindow:
         self.root_window.mainloop()
 
 class InstallNewPackageWindow:
+    # Allows users to search for and install packages
     def __init__(self, tk_window):
         self.tk_window = tk_window;
         self.tk_window.withdraw()
         self.tk_window.title('Install a new library')
         self.tk_window.protocol("WM_DELETE_WINDOW", self.close_install_pkg_window)
+        self.tk_window.geometry('800x500')
 
         frame1 = Frame(self.tk_window)
         frame1.pack(side=TOP, fill=X, expand=0)
@@ -237,20 +238,19 @@ class InstallNewPackageWindow:
 
         # Installed Packages Treeview
         self.tv_ip = ttk.Treeview(frame3, yscroll=self.tv_vscb.set, xscroll=self.tv_hscb.set)
-        self.tv_ip['columns'] = ('package_name', 'version', 'triplet', 'description')
+        self.tv_ip['columns'] = ('package_name', 'description')
 
         self.tv_ip.column('#0', width=0, stretch=NO)
         self.tv_ip.column('package_name', width=140, anchor=W, stretch=NO)
-        self.tv_ip.column('version', width=90, anchor=W, stretch=NO)
-        self.tv_ip.column('triplet', width=100, anchor=W, stretch=NO)
         self.tv_ip.column('description', width=160, anchor=W, stretch=YES)
 
         self.tv_ip.heading('package_name', text='Package Name', anchor=W)
-        self.tv_ip.heading('version', text='Version', anchor=W)
-        self.tv_ip.heading('triplet', text='Triplet', anchor=W)
         self.tv_ip.heading('description', text='Description', anchor=W)
         self.tv_ip.pack(expand=1, fill=BOTH, side=TOP)
 
+        self.no_pkg_inst_label = ttk.Label(self.tv_ip, text="No results", background='#FFFFFF')
+        self.no_pkg_inst_label.pack()
+        self.no_pkg_inst_label.place(relx=0.5, rely=0.5)
 
 
     def close_windows(self):
