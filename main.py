@@ -5,6 +5,7 @@ from tkinter import *
 from tkinter.ttk import *
 import json
 from multiprocessing import Process
+from tkinter import messagebox
 import os
 
 # site that shows correct way to use a treeview scrollbar
@@ -27,9 +28,10 @@ import os
 # Good explanation of grid
 # https://www.pythontutorial.net/tkinter/tkinter-grid/
 
-# Provide a fancier Input
+
 class EntryWithPlaceholder(tk.Entry):
-    # Provide a fancier Input
+    """ Provide a fancier Input
+    """
     def __init__(self, master=None, placeholder="PLACEHOLDER", color='grey'):
         super().__init__(master)
 
@@ -55,6 +57,7 @@ class EntryWithPlaceholder(tk.Entry):
         if not self.get():
             self.put_placeholder()
 
+
 class VCPKGInterface:
     # Provide a class based interface to communicate with vcpkg.exe
     def __init__(self):
@@ -76,6 +79,12 @@ class VCPKGInterface:
 
         self.search_executing = False
     
+    def remove_package(self):
+        pass
+    
+    def install_package(self, package_name):
+        pass
+
     def search_for_package(self, search_string):
         def spawn_search(search_string):
             # TODO: vcpkg search command ignores --x-json, look for/submit an issue, maybe it's easy to implement?
@@ -201,30 +210,6 @@ class VCPKGInterface:
 class OverviewWindow:
     """ Main GUI window, seen when the application
     """
-
-    def open_package_context_menu(self, event):
-        clicked_item = self.tv_ip.identify('item',event.x,event.y)
-        region_clicked = self.tv_ip.identify_region(event.x, event.y)
-
-        # Only open the dialog if they've rightclicked on an item (Not the header etc)
-        if region_clicked != 'cell':
-            return
-
-        # If they right clicked on an item that isn't selected already, then change the selection to this single item
-        selected_items = self.tv_ip.selection() # TODO: Is this returning the ID's or the index?
-
-        if clicked_item not in selected_items:
-            self.tv_ip.selection_set(clicked_item)
-            self.tv_ip.update()
-            selected_items = self.tv_ip.selection()  # TODO: Is this returning the ID's or the index?
-
-        if len(selected_items) > 1:
-            self.menu_packages_context.tk_popup(event.x_root, event.y_root)
-        elif len(selected_items) == 1:
-            self.menu_package_context.tk_popup(event.x_root, event.y_root)
-        else:
-            raise Exception("This shouldn't happen")
-
     def __init__(self, vcpkg_obj: VCPKGInterface):
         self.vcpkg_obj = vcpkg_obj
         self.root_window = Tk()
@@ -327,6 +312,29 @@ class OverviewWindow:
         # self.show_install_new_vc_package()
         # self.show_installed_package_details()
 
+    def open_package_context_menu(self, event):
+        clicked_item = self.tv_ip.identify('item',event.x,event.y)
+        region_clicked = self.tv_ip.identify_region(event.x, event.y)
+
+        # Only open the dialog if they've rightclicked on an item (Not the header etc)
+        if region_clicked != 'cell':
+            return
+
+        # If they right clicked on an item that isn't selected already, then change the selection to this single item
+        selected_items = self.tv_ip.selection() # TODO: Is this returning the ID's or the index?
+
+        if clicked_item not in selected_items:
+            self.tv_ip.selection_set(clicked_item)
+            self.tv_ip.update()
+            selected_items = self.tv_ip.selection()  # TODO: Is this returning the ID's or the index?
+
+        if len(selected_items) > 1:
+            self.menu_packages_context.tk_popup(event.x_root, event.y_root)
+        elif len(selected_items) == 1:
+            self.menu_package_context.tk_popup(event.x_root, event.y_root)
+        else:
+            raise Exception("This shouldn't happen")
+
     def open_package_details(self, event):
         self.show_installed_package_details()
 
@@ -346,13 +354,13 @@ class OverviewWindow:
         selected_package_name = self.tv_ip.item(selected_package)['values'][0]
         self.installed_package_details_class.present_package(selected_package_name)
 
-
     def show_install_new_vc_package(self):
         self.install_new_pkg_window.update()
         self.install_new_pkg_window.deiconify()
 
-    # add a new package to the treeview. If we have more than one architecture installed, then make children
     def add_installed_package(self, package_info):
+        """add a new package to the treeview. If we have more than one architecture installed, then make children
+        """
         # self.package_name_to_treeview_index_dict
 
         package_name = package_info['package_name']
@@ -406,8 +414,9 @@ class OverviewWindow:
         self.root_window.mainloop()
 
 
-# Details window for installed packages
 class InstalledPackageDetails:
+    """ Details window for installed packages
+    """
     def __init__(self, tk_window, vcpkg_obj: VCPKGInterface):
         self.vcpkg_obj = vcpkg_obj
         self.tk_window = tk_window;
@@ -446,8 +455,9 @@ class InstalledPackageDetails:
         frame2.rowconfigure(0, weight=1)
 
         # Treeview
-        self.tv_instd_ver_pkg = ttk.Treeview(frame2)
+        self.tv_instd_ver_pkg = ttk.Treeview(frame2, selectmode=BROWSE)
         self.tv_instd_ver_pkg.grid(row=0, column=0, sticky='nsew')
+        self.tv_instd_ver_pkg.bind('<<TreeviewSelect>>', self.selection_change)
 
         self.tv_instd_ver_pkg['columns'] = ('version', 'architecture')
 
@@ -468,7 +478,7 @@ class InstalledPackageDetails:
         self.but_remove_selected = ttk.Button(frame3, text="Add Architecture")
         self.but_remove_selected.pack(side=TOP, fill=X)
 
-        self.but_remove_selected = ttk.Button(frame3, text="Remove Selected", state=DISABLED)
+        self.but_remove_selected = ttk.Button(frame3, text="Remove Selected", state=DISABLED, command=self.remove_selected_package)
         self.but_remove_selected.pack(side=TOP, fill=X)
 
         self.but_remove_all = ttk.Button(frame3, text="Remove All")
@@ -481,7 +491,8 @@ class InstalledPackageDetails:
         self.tk_window.update()
         self.tk_window.deiconify()
         self.tv_instd_ver_pkg.delete(*self.tv_instd_ver_pkg.get_children())
-
+        self.but_remove_selected.config(state=DISABLED)
+        self.but_remove_selected.update()
         pkg_info = self.vcpkg_obj.get_package_info(package_name)
 
         self.entry_pkg_name.delete(0, END)
@@ -499,9 +510,33 @@ class InstalledPackageDetails:
 
                 next_tv_id = next_tv_id + 1
 
+    def selection_change(self, event):
+        selected_items = self.tv_instd_ver_pkg.selection() # TODO: Is this returning the ID's or the index?
 
-# Dialog to search for and install new packages
+        if len(selected_items) == 0:
+            self.but_remove_selected.config(state=DISABLED)
+        else:
+            self.but_remove_selected.config(state=ACTIVE)
+    
+    def remove_selected_package(self):
+        selected_items = self.tv_instd_ver_pkg.selection()
+
+        selected_package = selected_items[0]
+        selected_package_architecture = self.tv_instd_ver_pkg.item(selected_package)['values'][1]
+        selected_package_name = self.entry_pkg_name.get()
+
+        # print(selected_package_name, selected_package_architecture)
+        complete_package_name = selected_package_name + ':' + selected_package_architecture
+
+        answer = messagebox.askokcancel(title="Remove Package", message="Removing package '" + complete_package_name + "'", parent=self.tk_window)
+
+        if answer == True:
+            self.vcpkg_obj.remove_package(complete_package_name)
+
+
 class InstallNewPackageWindow:
+    """ Dialog to search for and install new packages
+    """
     # Allows users to search for and install packages
     def __init__(self, tk_window, vcpkg_obj: VCPKGInterface):
         self.tk_window = tk_window;
@@ -599,7 +634,6 @@ class InstallNewPackageWindow:
         self.combo_architecture.config(values=archs_list)
         self.combo_architecture.update()
 
-
     def selection_change(self, event):
         selected_items = self.tv_ip.selection() # TODO: Is this returning the ID's or the index?
         if len(selected_items) == 0:
@@ -612,9 +646,6 @@ class InstallNewPackageWindow:
         else:
             self.combo_version.config(state="readonly")
 
-
-
-    
     def search_for_package(self):
         if self.search_entry.get() == "Enter a package name to search for":
             return
