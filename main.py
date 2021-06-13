@@ -4,6 +4,8 @@ import tkinter as tk
 from tkinter import *
 from tkinter.ttk import *
 import json
+from multiprocessing import Process
+import os
 
 # site that shows correct way to use a treeview scrollbar
 # https://www.pythontutorial.net/tkinter/tkinter-treeview/
@@ -69,6 +71,58 @@ class VCPKGInterface:
         # Triplets available to be installed
         self.available_triplets = None
 
+        # Cached searches
+        self.cached_search_strings = dict()
+
+        self.search_executing = False
+    
+    def search_for_package(self, search_string):
+        def spawn_search(search_string):
+            # TODO: vcpkg search command ignores --x-json, look for/submit an issue, maybe it's easy to implement?
+            process = subprocess.Popen([self.vcpkg_exe_path, 'search', search_string], stdout=subprocess.PIPE)
+            stdout = process.communicate()[0].decode("utf-8")
+            
+            return stdout
+        
+        if self.search_executing:
+            raise Exception("Cannot execute simultaneous searches")
+        
+        if search_string in self.cached_search_strings:
+            return self.cached_search_strings[search_string]
+        
+        self.search_executing = True
+
+        results = spawn_search(search_string)
+
+        results_json = self.interpret_search_results(results)
+        self.cached_search_strings[search_string] = results_json
+        
+        self.search_executing = False
+        return results_json
+
+    def interpret_search_results(self, results):
+        packages = dict()
+
+        for line in results.split('\n'):
+            if line.strip() == "":
+                break
+            
+            end_of_pkg_name = line.find(' ')
+            package_name = line[0:end_of_pkg_name]
+            packages[package_name] = dict()
+
+            start_of_version = line.find(' ', 20)
+            if(start_of_version == 20):
+                version = line[20:20+17].strip()
+                if version != '':
+                    has_version = True
+                    packages[package_name]['version'] = version
+
+            description = line[38:]
+            packages[package_name]['description'] = description
+        
+        return packages
+        
     def get_installed_packages(self):
         # vcpkg.exe list --x-json
         if self.installed_packages is None or self.installed_packages_dirty is True:
@@ -90,7 +144,7 @@ class VCPKGInterface:
             gathering_community = False
 
             builtins = []
-            commhnity = []
+            community = []
 
             for line in stdout.split('\n'):
                 if line.strip() == "VCPKG built-in triplets:":
@@ -113,11 +167,11 @@ class VCPKGInterface:
                         gathering_community = False
                         continue
                     else:
-                        commhnity.append(line.strip())
+                        community.append(line.strip())
 
             self.available_triplets = dict()
             self.available_triplets['builtin'] = builtins
-            self.available_triplets['community'] = commhnity
+            self.available_triplets['community'] = community
 
         return self.available_triplets
 
@@ -225,14 +279,6 @@ class OverviewWindow:
 
         self.root_window.config(menu=menubar)
 
-        # Toolbar
-        # menubutton = Menubutton(frame1, text="Package")
-        # menubutton.pack(side=LEFT)
-        # menubutton2 = Menubutton(frame1, text="Packages")
-        # menubutton2.pack(side=LEFT)
-        # menubutton.menu = Menu(menubutton, tearoff=0)
-        # menubutton["menu"] = menubutton.menu
-
         # Installed Packages label
         installed_packages = ttk.Label(self.root_window, text = "Installed Packages", justify=LEFT)
         installed_packages.pack(anchor="w", side=TOP)
@@ -240,6 +286,8 @@ class OverviewWindow:
         # Treeview and scrollbar container
         frame2 = ttk.Frame(self.root_window)
         frame2.pack(expand=1, fill=BOTH, side=BOTTOM)
+        frame2.columnconfigure(0, weight=1)
+        frame2.rowconfigure(0, weight=1)
 
         # Scrollbars
         self.tv_vscb = ttk.Scrollbar(frame2, orient=VERTICAL)
@@ -267,13 +315,9 @@ class OverviewWindow:
         self.tv_ip.heading('description', text='Description', anchor=W)
         self.tv_ip.grid(row=0, column=0, sticky='ewns')
 
-        frame2.columnconfigure(0, weight=1)
-        frame2.rowconfigure(0, weight=1)
-
-        # Scrollbars
+        # Link scrollbars
         self.tv_vscb.configure(command=self.tv_ip.yview)
         self.tv_hscb.configure(command=self.tv_ip.xview)
-        # self.tv_hscb.pack(anchor=SE);
 
         self.tv_ip.columnconfigure(4, minsize=500)
 
@@ -288,7 +332,7 @@ class OverviewWindow:
 
     def init_other_windows(self):
         self.install_new_pkg_window = tk.Toplevel(self.root_window)
-        self.install_new_pkg_class = InstallNewPackageWindow(self.install_new_pkg_window)
+        self.install_new_pkg_class = InstallNewPackageWindow(self.install_new_pkg_window, self.vcpkg_obj)
 
         self.installed_package_details_window = tk.Toplevel(self.root_window)
         self.installed_package_details_class = InstalledPackageDetails(self.installed_package_details_window, self.vcpkg_obj)
@@ -360,6 +404,7 @@ class OverviewWindow:
     def open_gui(self):
         self.populate_installed_packages()
         self.root_window.mainloop()
+
 
 # Details window for installed packages
 class InstalledPackageDetails:
@@ -458,12 +503,14 @@ class InstalledPackageDetails:
 # Dialog to search for and install new packages
 class InstallNewPackageWindow:
     # Allows users to search for and install packages
-    def __init__(self, tk_window):
+    def __init__(self, tk_window, vcpkg_obj: VCPKGInterface):
         self.tk_window = tk_window;
         self.tk_window.withdraw()
         self.tk_window.title('Install a new library')
         self.tk_window.protocol("WM_DELETE_WINDOW", self.close_install_pkg_window)
         self.tk_window.geometry('800x500')
+        
+        self.vcpkg_obj = vcpkg_obj
 
         frame1 = Frame(self.tk_window)
         frame1.pack(side=TOP, fill=X, expand=0)
@@ -471,38 +518,144 @@ class InstallNewPackageWindow:
         self.search_entry = EntryWithPlaceholder(frame1, "Enter a package name to search for")
         self.search_entry.pack(side=LEFT, fill=BOTH, expand=1)
 
-        self.search_but = Button(frame1, text='Search')
+        self.search_but = Button(frame1, text='Search', command=self.search_for_package)
         self.search_but.pack(side=RIGHT)
 
         # Search results area
         frame2 = ttk.Frame(self.tk_window)
-        frame2.pack(expand=1, fill=BOTH, side=BOTTOM)
-
-        frame3 = ttk.Frame(frame2)
-        frame3.pack(expand=1, fill=BOTH, side=LEFT)
+        frame2.pack(expand=1, fill=BOTH, side=TOP)
+        frame2.columnconfigure(0, weight=1)
+        frame2.rowconfigure(0, weight=1)
 
         # Scrollbars
         self.tv_vscb = ttk.Scrollbar(frame2, orient=VERTICAL)
-        self.tv_vscb.pack(side=RIGHT, fill=Y)
-        self.tv_hscb = ttk.Scrollbar(frame3, orient=HORIZONTAL)
-        self.tv_hscb.pack(side=BOTTOM, fill=X)
+        self.tv_vscb.grid(row=0, column=1, sticky='nse')
+        self.tv_hscb = ttk.Scrollbar(frame2, orient=HORIZONTAL)
+        self.tv_hscb.grid(row=1, column=0, sticky='ewn')
 
         # Installed Packages Treeview
-        self.tv_ip = ttk.Treeview(frame3, yscroll=self.tv_vscb.set, xscroll=self.tv_hscb.set)
-        self.tv_ip['columns'] = ('package_name', 'description')
+        self.tv_ip = ttk.Treeview(frame2, yscroll=self.tv_vscb.set, xscroll=self.tv_hscb.set)
+        self.tv_ip['columns'] = ('package_name', 'version', 'description')
+        self.tv_ip.bind('<<TreeviewSelect>>', self.selection_change)
 
         self.tv_ip.column('#0', width=0, stretch=NO)
         self.tv_ip.column('package_name', width=140, anchor=W, stretch=NO)
+        self.tv_ip.column('version', width=100, anchor=W, stretch=NO)
         self.tv_ip.column('description', width=160, anchor=W, stretch=YES)
 
         self.tv_ip.heading('package_name', text='Package Name', anchor=W)
+        self.tv_ip.heading('version', text='Version', anchor=W)
         self.tv_ip.heading('description', text='Description', anchor=W)
-        self.tv_ip.pack(expand=1, fill=BOTH, side=TOP)
+        self.tv_ip.grid(row=0, column=0, sticky='ewns')
 
         self.no_pkg_inst_label = ttk.Label(self.tv_ip, text="No results", background='#FFFFFF')
         self.no_pkg_inst_label.pack()
         self.no_pkg_inst_label.place(relx=0.5, rely=0.5)
+        
+        # Link scrollbars
+        self.tv_vscb.configure(command=self.tv_ip.yview)
+        self.tv_hscb.configure(command=self.tv_ip.xview)
 
+        # Bottom Info panel
+        separator = ttk.Separator(self.tk_window, orient='horizontal')
+        separator.pack(side=TOP, fill=X)
+
+        frame3 = ttk.Frame(self.tk_window)
+        frame3.pack(fill=BOTH, side=BOTTOM)
+        frame3.columnconfigure(0, weight=1)
+
+        self.label_name = ttk.Label(frame3, text='Package Name')
+        self.label_name.grid(sticky='nsw')
+        self.label_description = ttk.Label(frame3, text='Package Description')
+        self.label_description.grid(row=1, sticky='nsw')
+
+        label3 = ttk.Label(frame3, text='Version')
+        label3.grid(row=0, column=1, sticky='nsw')
+        self.combo_version = ttk.Combobox(frame3, values=['Default'], state="readonly")
+        self.combo_version.grid(column=1, row=1)
+        self.combo_version.current(0)
+
+        label4 = ttk.Label(frame3, text='Architecture')
+        label4.grid(row=0, column=2, sticky='nsw')
+        self.combo_architecture = ttk.Combobox(frame3, state="readonly")
+        self.populate_architecture_combo()
+        self.combo_architecture.grid(column=2, row=1)
+        self.combo_architecture.current(0)
+
+        self.but_install_pkg = ttk.Button(frame3, text="Install", state=DISABLED)
+        self.but_install_pkg.grid(column=3, rowspan=2, row=0, sticky='ns')
+
+    def populate_architecture_combo(self):
+        archs_list = ['System Default']
+
+        archs = self.vcpkg_obj.get_available_triplets()
+
+
+        for arch in archs['builtin']:
+            archs_list.append(arch)
+        for arch in archs['community']:
+            archs_list.append(arch)
+        
+        self.combo_architecture.config(values=archs_list)
+        self.combo_architecture.update()
+
+
+    def selection_change(self, event):
+        selected_items = self.tv_ip.selection() # TODO: Is this returning the ID's or the index?
+        if len(selected_items) == 0:
+            self.but_install_pkg.config(state=DISABLED)
+        else:
+            self.but_install_pkg.config(state=ACTIVE)
+        
+        if len(selected_items) > 1:
+            self.combo_version.config(state=DISABLED)
+        else:
+            self.combo_version.config(state="readonly")
+
+
+
+    
+    def search_for_package(self):
+        if self.search_entry.get() == "Enter a package name to search for":
+            return
+        
+        search_string = self.search_entry.get()
+
+        # Update the GUI
+        self.search_but.config(state=DISABLED)
+        self.no_pkg_inst_label.config(text="Searching")
+        self.no_pkg_inst_label.place(relx=0.5, rely=0.5)
+        self.tk_window.update()
+
+        search_results = self.vcpkg_obj.search_for_package(search_string)
+        
+        if len(search_results) == 0:
+            self.no_pkg_inst_label.config(text="No results")
+        else:
+            self.no_pkg_inst_label.place_forget()
+            self.no_pkg_inst_label.update()
+
+        self.search_but.config(state=ACTIVE)
+        self.search_but.update()
+
+        self.populate_search_results(search_results)
+    
+    def populate_search_results(self, search_results):
+        self.tv_ip.delete(*self.tv_ip.get_children())
+
+        next_tv_id = 0
+
+        for package_name, value in search_results.items():
+            new_treeview_id = next_tv_id
+            
+            if 'version' in value:
+                version = value['version']
+            else:
+                version = ''
+
+            self.tv_ip.insert(parent='', index=tk.END, iid=new_treeview_id, text='', values=(package_name, version, value['description']))
+            
+            next_tv_id = next_tv_id + 1
 
     def close_windows(self):
         self.tk_window.withdraw()
